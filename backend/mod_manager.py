@@ -65,7 +65,7 @@ class ModManager:
     def _is_mod_enabled(self, mod_name: str) -> bool:
         """
         检查 Mod 是否已启用
-        对于包含多个 Mod 的压缩包，只要有一个 Mod 已启用就返回 True
+        检查游戏 Mods 目录中是否存在以压缩包名命名的主目录
         
         Args:
             mod_name: Mod 名称（压缩包文件名，不含扩展名）
@@ -73,44 +73,9 @@ class ModManager:
         Returns:
             是否已启用
         """
-        # 检查游戏 Mods 目录中是否存在同名文件夹
-        enabled_mods = self.list_enabled_mods()
-        
-        # 简单匹配：压缩包名与 Mod 文件夹名相同
-        for enabled_mod in enabled_mods:
-            if enabled_mod.lower() == mod_name.lower():
-                return True
-        
-        # 尝试检查压缩包中的 Mod 文件夹名（如果存在）
-        try:
-            mod_zip = self.local_mods_path / f"{mod_name}.zip"
-            if mod_zip.exists():
-                # 临时解压并检查
-                temp_dir = self.local_mods_path / f"_check_{mod_name}"
-                if temp_dir.exists():
-                    shutil.rmtree(temp_dir)
-                temp_dir.mkdir()
-                
-                with zipfile.ZipFile(mod_zip, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
-                
-                mod_roots = self._find_all_mod_roots(temp_dir)
-                
-                # 检查压缩包中的文件夹名是否在已启用列表中
-                for mod_root in mod_roots:
-                    folder_name = mod_root.name
-                    if folder_name in enabled_mods:
-                        # 清理临时目录
-                        shutil.rmtree(temp_dir)
-                        return True
-                
-                # 清理临时目录
-                if temp_dir.exists():
-                    shutil.rmtree(temp_dir)
-        except Exception:
-            pass
-        
-        return False
+        # 检查游戏 Mods 目录中是否存在以压缩包名命名的主目录
+        main_dir = self.game_mods_path / mod_name
+        return main_dir.exists() and main_dir.is_dir()
     
     def _count_mods_in_zip(self, zip_path: Path) -> int:
         """
@@ -175,7 +140,7 @@ class ModManager:
     def enable_mod(self, mod_filename: str) -> bool:
         """
         启用 Mod（解压到游戏 Mods 目录）
-        支持一个压缩包中包含多个 Mod 文件夹
+        解压后保持主目录结构，便于统一管理和禁用
         
         Args:
             mod_filename: Mod 文件名
@@ -189,8 +154,16 @@ class ModManager:
                 print(f"Mod 文件不存在: {mod_filename}")
                 return False
             
+            # 使用压缩包名（不含扩展名）作为主目录名
+            mod_name = mod_path.stem
+            main_dir = self.game_mods_path / mod_name
+            
+            # 如果已启用，先删除
+            if main_dir.exists():
+                shutil.rmtree(main_dir)
+            
             # 解压到临时目录
-            temp_dir = self.local_mods_path / f"_temp_{mod_path.stem}"
+            temp_dir = self.local_mods_path / f"_temp_{mod_name}"
             if temp_dir.exists():
                 shutil.rmtree(temp_dir)
             temp_dir.mkdir()
@@ -198,31 +171,40 @@ class ModManager:
             with zipfile.ZipFile(mod_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             
-            # 查找所有 Mod 文件夹（包含 manifest.json 的目录）
+            # 查找所有的 Mod 根目录（包含 manifest.json 的目录）
             mod_roots = self._find_all_mod_roots(temp_dir)
-            
-            if mod_roots:
-                enabled_count = 0
-                for mod_root in mod_roots:
-                    # 使用原始文件夹名称作为 Mod 名称
-                    # 这样可以保持原始的文件夹结构，避免使用 UniqueID
-                    mod_name = mod_root.name
-                    
-                    # 移动到游戏 Mods 目录
-                    destination = self.game_mods_path / mod_name
-                    
-                    # 如果已存在，先删除
-                    if destination.exists():
-                        shutil.rmtree(destination)
-                    
-                    shutil.move(str(mod_root), str(destination))
-                    print(f"Mod 已启用: {mod_name}")
-                    enabled_count += 1
-                
-                print(f"共启用 {enabled_count} 个 Mod")
-            else:
+            if not mod_roots:
                 print(f"未找到有效的 Mod 结构（缺少 manifest.json）")
+                shutil.rmtree(temp_dir)
                 return False
+            
+            # 创建主目录
+            main_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 根据 mod 数量决定目录结构
+            if len(mod_roots) == 1:
+                # 单个 mod：主目录下直接是 mod 文件（manifest.json 等）
+                mod_root = mod_roots[0]
+                for item in mod_root.iterdir():
+                    dest = main_dir / item.name
+                    if dest.exists():
+                        if dest.is_dir():
+                            shutil.rmtree(dest)
+                        else:
+                            dest.unlink()
+                    shutil.move(str(item), str(dest))
+                print(f"Mod 已启用: {mod_name}（单个 Mod）")
+            else:
+                # 多个 mod：主目录下是各个 mod 的文件夹
+                for mod_root in mod_roots:
+                    mod_folder_name = mod_root.name
+                    dest = main_dir / mod_folder_name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.move(str(mod_root), str(dest))
+                print(f"Mod 已启用: {mod_name}（包含 {len(mod_roots)} 个 Mod）")
+                for mod_root in mod_roots:
+                    print(f"  - {mod_root.name}")
             
             # 清理临时目录
             if temp_dir.exists():
@@ -232,30 +214,37 @@ class ModManager:
             
         except Exception as e:
             print(f"启用 Mod 失败: {e}")
-            # 清理临时目录
+            # 清理临时目录和可能创建的主目录
             temp_dir = self.local_mods_path / f"_temp_{Path(mod_filename).stem}"
             if temp_dir.exists():
                 shutil.rmtree(temp_dir)
+            main_dir = self.game_mods_path / Path(mod_filename).stem
+            if main_dir.exists():
+                shutil.rmtree(main_dir)
             return False
     
     def disable_mod(self, mod_name: str) -> bool:
         """
-        禁用 Mod（从游戏 Mods 目录删除）
+        禁用 Mod（删除游戏 Mods 目录中的主目录）
+        删除整个主目录及其下的所有 Mod
         
         Args:
-            mod_name: Mod 名称（游戏 Mods 目录中的文件夹名）
+            mod_name: Mod 名称（压缩包文件名，不含扩展名）
             
         Returns:
             是否禁用成功
         """
         try:
-            mod_dir = self.game_mods_path / mod_name
-            if not mod_dir.exists():
+            main_dir = self.game_mods_path / mod_name
+            if not main_dir.exists():
                 print(f"Mod 未启用: {mod_name}")
                 return False
             
-            shutil.rmtree(mod_dir)
-            print(f"Mod 已禁用: {mod_name}")
+            # 统计将要删除的 Mod 数量
+            mod_count = len(self._find_all_mod_roots(main_dir))
+            
+            shutil.rmtree(main_dir)
+            print(f"Mod 已禁用: {mod_name}（包含 {mod_count} 个 Mod）")
             return True
             
         except Exception as e:

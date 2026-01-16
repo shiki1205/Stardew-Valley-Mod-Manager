@@ -126,6 +126,10 @@ class MainWindow(QMainWindow):
         enable_btn.clicked.connect(self.enable_mod)
         local_btn_layout.addWidget(enable_btn)
         
+        disable_btn_left = QPushButton("禁用")
+        disable_btn_left.clicked.connect(self.disable_mod_from_local)
+        local_btn_layout.addWidget(disable_btn_left)
+        
         delete_btn = QPushButton("删除")
         delete_btn.clicked.connect(self.delete_local_mod)
         local_btn_layout.addWidget(delete_btn)
@@ -266,6 +270,41 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "错误", "启用 Mod 失败")
             self.status_label.setText("启用失败")
     
+    def disable_mod_from_local(self):
+        """从本地列表禁用 Mod"""
+        if not self.mod_manager:
+            QMessageBox.warning(self, "警告", "请先配置游戏路径")
+            return
+        
+        current_item = self.local_mods_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "警告", "请先选择一个 Mod")
+            return
+        
+        mod_data = current_item.data(Qt.ItemDataRole.UserRole)
+        
+        if not mod_data['enabled']:
+            QMessageBox.information(self, "提示", "该 Mod 未启用")
+            return
+        
+        mod_name = mod_data['name']
+        
+        reply = QMessageBox.question(
+            self,
+            "确认",
+            f"确定要禁用 Mod '{mod_name}' 吗？\n将删除游戏目录中的所有相关文件。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.status_label.setText("正在禁用 Mod...")
+            if self.mod_manager.disable_mod(mod_name):
+                QMessageBox.information(self, "成功", f"Mod '{mod_name}' 已禁用")
+                self.refresh_mod_list()
+            else:
+                QMessageBox.critical(self, "错误", "禁用 Mod 失败")
+                self.status_label.setText("禁用失败")
+    
     def disable_mod(self):
         """禁用 Mod"""
         if not self.mod_manager:
@@ -311,18 +350,15 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "确认",
-            f"确定要删除 Mod '{mod_data['name']}' 吗？\n注意：如果该 Mod 已启用，需要先禁用。",
+            f"确定要删除 Mod '{mod_data['name']}' 吗？\n注意：如果该 Mod 已启用，将先自动禁用。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
             # 如果已启用，先禁用
             if mod_data['enabled']:
-                enabled_mods = self.mod_manager.list_enabled_mods()
-                for enabled_mod in enabled_mods:
-                    if enabled_mod.lower() == mod_data['name'].lower():
-                        self.mod_manager.disable_mod(enabled_mod)
-                        break
+                self.status_label.setText("正在禁用 Mod...")
+                self.mod_manager.disable_mod(mod_data['name'])
             
             self.status_label.setText("正在删除 Mod...")
             if self.mod_manager.delete_local_mod(mod_data['filename']):
